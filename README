@@ -1,0 +1,210 @@
+README
+
+CONTENTS OF THIS FILE
+--------------------------------------------
+1. Design Choices
+2. How to Build/Run
+3. Testing
+4. Gui and extra choices
+5. Smart Suggestion
+6. Design Questions
+7. Checkstyle and Findbugs
+--------------------------------------------
+
+
+--------------------------------------------
+1. Design Choices
+--------------------------------------------
+The trie that I implemented begins as a regular trie with each character referencing a series of children. However, after insertion of all files, the trie can be compressed into something resembling a radix trie where all the nodes with only one children are joined together to save space.
+
+The Trie object contains a root, which is a mapping of characters to TrieNodes. TrieNodes contain the following:
+	1. A character representative of the TrieNode.
+		This character is the first character of the substring that this TrieNode holds. This is needed in order to determine what TrieNode to go to and to access TrieNodes from the mapping of chars to TrieNodes. The character representative of the TrieNode should never change since even when the Trie is compressed, characters are added to the end of the string and the character at the front never changes.
+
+	2. A string that the TrieNode holds.
+		The string at each TrieNode starts out as just one character in length, but after compression, will be joined with children strings. This is the portion of a word that is stored at this TrieNode.
+
+	3. A boolean that determines if the TrieNode is the end of a word
+		If the boolean is true, that means that this TrieNode contains the ending to a word that is part of the dictionary. If false, then this TrieNode is not the ending of a word.
+
+	4. A mapping of character to other children TrieNodes.
+		This mapping is used to determine how to traverse the trie. The next character of the word is queried using the map and the TrieNode corresponding to that character is returned. If there is no next TrieNode, then the word doesn't exist.
+
+The Trie is built by taking in a list of words that is parsed by a FileLoader object and then inserting words from that list one by one. 
+
+After all the words from all the files are inserted, the Trie is compressed. The Trie.compress() method is almost like a depth first search in that it goes all the way down the branch of a child and then on its way up, sees if there is only one children to a TrieNode (by determining how many keys are in the mapping to TrieNodes). If so, that child's string is appended to the parent string and that child's references are updated into the parent's references. The only time that a TrieNode wouldn't join with it's only child is when the parent TrieNode is the end of a word. This is because if the parent is the end of a word, appending it's child's string will overwrite the word at the parent. While this issue could have been solved by keeping markers as to how many words and their indices in the string at each node, I decided to not do so as this would have made the code more difficult to handle and one node for each word is already a decent optimization.
+
+To determine if a Trie contains a word, the word's first character is queried into the mapping and a TrieNode is produced, then, the substring at the TrieNode is compared to the word in question and the next letter to go to in the children is found by finding the next letter after the substring. This process is repeated until the TrieNode has no children or the word is found.
+
+Prefixes of words in the Trie are found by first getting the TrieNode that the prefix ends at. This is done in a process similar to Trie.contains(String), however, the exact word isn't looked for. As long as the prefix is in a portion of the substring, the TrieNode is returned. After finding the TrieNode to start at, all words are taken from this branch and below. This is done by keeping a list of strings and inserting words into that list when reaching TrieNodes marked as the ending of a word. The words are built by appending the substrings at the TrieNodes to the prefix being searched.
+
+The TrieNode class is a public class since some other classes such as LevenshteinSuggester makes use of some public methods to optimize edit distance searching. However, to allow for compression, TrieNodes have package accessible classes only where mutable copies of children and substrings are returned. These were needed in order to change TrieNodes as they are being compressed. However, all public methods to reach children and substrings return immutable copies.
+
+---------- Loading Files into the program --------------------------------------
+
+Text files are parsed using a FileLoader object that uses regular expression matching to change any non-alphabetical characters to spaces. Extra spaces are then removed and the lines are split by space and each word added to a list. The list of strings can then be handed to Trie or WordGrams to generate word-grams.
+
+---------- Generating WordGrams ------------------------------------------------
+
+WordGram are generated through the WordGram object which takes in a list of words (representing a stream of input) and computes unigram and bigram frequency. Multisets are used to keep track of how many times a single word appears out of all the streams. Multisets are also used on Map.Entry objects, which pair two strings together, to keep track of how many times a bigram appears. To make sure that bigrams are stream independent, WordGrams has a makeGrams() method to take in only one stream and comput the frequencies. Each stream's frequencies are computed independently. Unigrams are totaled up, and bigrams of two streams are only put together if the word pair is the same.
+
+----------- Generating Suggestions and Ranking ---------------------------------
+
+After files are loaded and word grams generated by objects instantiated in the Main.run() method, suggestions are then made through independent suggesters: LevenshteinSuggester, PrefixSuggester, WhiteSpaceSuggester. All of these suggester implement the Suggester interface, which only has a suggest() method that ouptuts a list of strings as suggestions. 
+	
+	LevenshteinSuggester takes in a Trie and a max edit distance. It then performs a depth first search of each branch in the trie and continues until the word on the branch has a higher edit distance than is allowed. The search can be cut short since all the words following that branch would have that word as prefix and would necessarily have even higher edit distances.
+
+	PrefixSuggester takes in a Trie as input and outputs words that contain a specified prefix. The suggest() method makes use of the wordsWithPrefix() method in the Trie.
+
+	WhiteSpaceSuggester takes in a Trie as input. It then iterates through the word being suggester for and for each char, breaks the word into a left half and right half. Next, it checks if both halves are legal words in the Trie using Trie.contains(). If both are legal, then it is a valid suggestion. Only the left half words are returned out of the two halves, but there is also a Map of string to string that can be requested through getPairs(). With the left word and the map of pairs, the right half word can be found.
+
+The main class has instance variables for each suggester and instantiated on user request. Next, the suggest method is called on all user requested suggesters and the output lists are combined into a set of recommended strings. A set was used to get rid of duplicates. This set is then sorted by using a string comparator returned through a SuggestionComparator object that composes independent comparators. 
+
+	EqualityComparator takes in a word from user input and compares two words for equality with the user inputted word to be suggested upon.
+
+	BigramComparator takes in a previous field and a Multiset of bigrams. The previous word along with the words to be sorted are compared for bigram frequency in the Multiset. The higher frequency is ranked higher.
+
+	UnigramComparator takes in a multiset of Strings and words with highest frequencies are ranked higher.
+
+	AlphabeticalComparator uses Java's built-in String.compareTo() method
+
+All of these comparators are passed into a composer class SuggestionComparator which has a method called getSuggestionComparator(varargs Comparator<String>), which takes in as many comparators as the user wishes and then returns a new comparator that compares strings using the comparators in the order of their argument.
+
+
+--------------------- Bringing it together -------------------------------------
+
+The program is run through the main method in the Main class. The main method creates a new Main object and passes in command line arguments. The Main object contains instance variables for dictionary, WordGrams, LevenshteinSuggester, PrefixSuggester, WhiteSpaceSuggester, and SmartOrder. All of these except for dictionary and WordGrams are initally null (false for SmartOrder). The .run() method is then called on the Main object. Run looks at the arguments passed in an uses JOptSimple to parse command line arguments. Instance variables for suggesters are then instantiated based on what arguments are made. 
+
+If the user doesn't pass in (--gui), a Repl object is then instantiated. The Repl object is a private static class in main that takes in an InputParser object, Computer object, and OutputPrinter object. The Repl itself is just an infinite loop that calls methods from the other objects. This design allows the input parsing, computing, and printing of results to be quickly adaptable. The InputParser takes in raw user input and formats it to be taken by the Computer. The Computer is constructed through a builder patter which takes in suggesters and smartOrders as requested by the user. The Computer then uses the suggesters to create a list of suggested words and then uses the comparators described above to sort the list. Next, the top 5 suggestoins are substituted for the last word of user input and then formatted to be a List of List of Strings. Where each outer list contains a line, which is an inner list of words. This is sent to the OutputPrinter which just prints everything out line by line.
+
+If the user wants a gui, a spark server is started and the server first initializes a front page by using the Main class instance variables to determine what suggesters the user wants. User requests are posted to a request handler object which instantiates InputParser and Computer objects as needed to return answers. Because I have abstracted all calculations to a Computer object, I can allow the user to change their suggester options dynamically in the gui. I just need to check what checkboxes the user selects and then make a new Computer object. Lastly, answers from the Computer object are formatted to HTML and then injected into a <div> below the searchbar using javascript.
+
+
+
+--------------------------------------------
+2. How to Build / Run
+--------------------------------------------
+
+To build the program, go to the Autocorrect directory and run "mvn package" to download all the necessary files and prepare the program. Next, the program can be run by typing in "./run" with the following arguments:
+
+	<filename>                 to a file to serve as the dictionary
+	--led <Integer distance>   to get edit distance suggestions with a max distance (distance should be >= 0)
+	--gui                      to load the gui
+	--prefix                   to get prefix suggestions
+	--whitespace               to get whitespace suggestions
+	--smart                    to turn on smart ordering. 
+
+The <filename> is mandatory as there needs to be a file to load the dictionary with. Invalid files will stop the program. Led should also be followed with a valid integer distance greater or equal to zero. Invalid distances will stop the program and notify the user. All other arguments are optional. Just make sure to spell them correctly!
+
+If --gui is selected, the gui will load on a local server at "localhost:4567/autocorrect". There will be a searchbar with live suggestions and more options (to be described later).
+
+
+--------------------------------------------
+3. Testing
+--------------------------------------------
+
+JUnit tests were performed for every class except Main and for every public method (except trivial ones such as toString(), hashCode(), etc...). JUnit tests results can be viewed when packaging the program using "mvn package" and can be looked at in depth through surefire-reports after packaging the program. To test my trie in depth, I made a DumbTrie which is  just a list of strings. Prefixes are searched by looking at every string and running String.substring(). The DumbTrie allowed me to use larger files to test my Trie implementation and guarantee that the results are correct. Smaller text files and edge cases were also tested by self-made files in the /testDicts directory. These were used for FileLoader, Suggester, and computer testing. Testing of InputParser was done by passing arguments as strings. Testing of OutputPrinter was done by having System.out pass the stream to a ByteArrayOutputStream and asserting that the ByteArrayOutputStream contained the correct string.
+
+System tests can be found in the /tests directory. I copied over the cs032 test suite and also added test of my own to test argument passing, input passing, and output correctness. Tests for argument passing are labeled with [ARGS], tests for special inputs are labled with [IN]. Output tests are labeled by name.
+
+System tests can be run by typing "cs032_system_tester ./run ./tests/* -t20" after packaging. The "-t20" is necessary to prevent timeout of the tester.
+
+
+--------------------------------------------
+4. Gui and extra choices
+--------------------------------------------
+
+The trie I implemented is built normally as a regular trie but then compressed so that every node with only one child is joined with that child (unless the parent node is already a word). This way, there are as many nodes as there are words in the dictionary as each word will have it's own node and all characters that don't end a word will be joined together. This makes the trie more space efficient than a regular trie where each node has a fixed number of children regardless if it's needed. 
+
+Besides basic functionality on the gui for live suggestions and a button to turn off suggestions, I also added other extras:
+
+	- Div on the lower left to show what files the user dictionary is coming from
+
+	- Glowing searchbar that glows blue when there are suggestions available and glows red when there are none. This feature lets the user know if there aren't suggestions so the user doesn't think the program crashed. This was done by javascript that checks if the suggestions text is empty or not.
+
+	- Portions of suggestions are also bolded to show differences between user input and the suggested lines. Every previous word is bolded since we assume that everything but the last word is set in stone. Suggested words to replace the last word have letters bolded if they match the user inputted word.
+
+	- Suggestions that will change color when hovering a cursor over them and are clickable. Upon click, the suggestion will jump to the searchbar. This was done thorugh clickhandlers that call functions to insert the phrase at the div into the searchbar.
+
+	- Keyboard shortcuts to select suggestions. Users can press "alt + 1", "alt + 2", etc to get the first, second, third suggestion and so on. These were done using keyboard event handlers that detect pressess and calls functions to insert the string at the div to the searchbar.
+
+	- Advanced options that allows the user to dynamically change their autocorrect settings. The user can turn on or off any options to customize the search. When the user first starts the gui, the checkboxes will be prefilled with the options that the user passed in at the command line, this is done by having placholders in the freemarker template and filling them according to if the Main class has the suggester objects. My function that sends ajax post requests also sends information about what checkboxes are checked for user options and then my request handler makes a Computer object as described above to handle the specific checkboxes. 
+
+
+--------------------------------------------
+5. Smart Suggestion
+--------------------------------------------
+
+(It's really cool to play around with the gui and selecting smart to see live updates of the suggestion ordering!)
+
+My sorting method places more weight on what the user has already typed in the searchbar by giving strings point values for each pair of chars that they have in the same order as the word being suggested for. The words with the highest point values are placed higher. 
+
+Example: User inputs "ball". The possible pairs are: (b-a), (b-l), (b-l), (a-l), (a-l), (l-l). Each of these pairs will be worth a point if the string being compared as the letters in the same order. So the word "bale" will have 3 points. Note that "bale" doesn't earn a point for the second pair of (b-l) because we already used the "l" in the first pair. Words cannot repeat their letters for use in later pairs that begin with the same starting letter.
+
+In case of a tie in point values, the shortest word is preferred as the shortest word with the same point values is most likely closer to the user inputted word. 
+
+Example: 
+	User input:   "smart" 
+	suggestions:  "smarter" and "smarts"
+	Ranking:      "smarts", then "smarter"
+
+	Reason:       "smarts" and "smarter" have same point value, but "smarts" is shorter and should be closer to the inputted word.
+
+
+This technique in essence takes into account edit distance and prefix. The lower the edit distance, the more points a word gets, however, we also be careful to not suggest super long words that begin with the user inputted word, so also look at length as a secondary measure. 
+
+This smart comparison works better than simply looking at the lowest edit distance because when the user has a typo where letteres are flipped in a word, edit distance would mark that word as very different whereas my comparison would still award points. 
+
+	Example of edit distance drawback: 
+		User input:       "dsitcne"        (has 21 letter pairs)
+		User means:       "distance"
+
+		Edit distance:    "dsitcne" has led of 4 from "distance". Words such as "site",  "sites", "acne" would be ranked higher or equal.
+
+		Smart:            "distance" awarded 18 out of 21 possible points and the other words I mentioned wouldn't come close in point value.
+
+Using the default comparator is the worst when just given a text like dictionary.txt and a small word. Searching for "th" with --led 2 will result in "aa", "aah", "ab" as the top three searches. 
+
+Using smart comparator on the same search would give "eth", "nth", "the" as the top three searches. 
+
+My smart comparison also works better than finding the shortest word with the current word as prefix. This is because smart comparison also works when the word isn't a prefix. If the user simply forgot the first letter or two of a word, prefix wouldn't come up with the word that the user wants, however, smart comparison would still give the majority of points to words that contain the user input as a substring. 
+	
+	Example of smart vs prefix:
+		User input:                    "stance"
+		User means:                    "distance"
+		Smallest Prefix comparison:    "stances"
+		Smart:                         "stances, distance, distances"
+	My smart comparison would return "stance" first because that equals the user input, but then would also suggest words that character ordering similar to the user input.
+
+Basically, my smart comparator merges the best of prefix and edit distance sorting methods and finds words that are similar to the user inputted one. To account for bigrams and unigrams, I also consider the words frequencies if the point values are tied after my smart comparator. If everything is tied, I finally check alphabetical order. 
+
+Some of the drawbacks of my smart comparator is that it doesn't take into account context as much. If the user is typing a long frequently used line, other techniques such as trigrams would weigh context more and possibly give better suggestions. Also, calculating the point value of a word requires iterating through each pair of letters, a slow operation when there are many words or if the words are very long. The speed shouldn't be much of an issue though because there are hardly any words longer than 10 letters long and the suggestions that I am sorting should already be a small subset of the larger dictionary. 
+
+
+
+--------------------------------------------
+6. Design Questions
+--------------------------------------------
+
+DQ1, How to handle multiple input fields on the same page?
+	
+	To handle multiple input fields on the same page, not much would have to change. Other than adding the extra field in HTML and giving it a unique ID, the ajax request can still go to the same RequestHandler because my RequestHandler will make a Computer object specifically for that input field's options (led, prefix, whitespace, smart). The computer object will find suggestions and then hand it back to the javascript function whcih can then check which element in HTML called it and then inject the suggestions into the suggestions div that belongs to the field which called it. To make sure that ajax requests won't be overlapping and calling for another response when the last one hasn't even arrived yet, I would just have to check if the last request is still out, if so, then I would abort() the request and pass the new one. This is all assuming that the handler wouldn't be handling simultaneous requests (the user will type in one field at a time). If there was a way for two fields on the same page to be used a the same time, then having separate handlers could be a better way to handle them.
+
+DQ2. What would change if another character was added on the end of all words?
+
+	Adding another character on the end of each word would double the number of possible words.This would have the effect of adding (n) more nodes to my trie, where (n) is the number of words stored in the trie. Each TrieNode stores a character representative, substring, boolean, and a map to children. The character representative is the first letter of the substring at each trie and the boolean tells us if the node is the end of a word. For each node that only has one child, the child's substring will be appended to the parent's, unless the parent was already a word itself (I didn't want to overwrite parent words). Since adding a character to the end of each word would mean that the parent (the original word) is already a word, the new character cannot be appended to the substring at the parent, it would instead have to have its own node under the parent. However, unlike a regular trie which explicitly gives an array of nodes, my implementation uses a mapping so that nodes are only created for the one character that is needed. Because of this, the number of nodes would increase by (n) where n is the number of words previously in the trie. The total number of nodes in my trie would still be less than an implementation where nodes aren't joined with only children. "Unique" words that have endings not shared with other words will have excess nodes saved because all ending characters will be compressed into one node.
+
+	If we are guaranteed that only one character would be added, then 
+
+
+--------------------------------------------
+7. CheckStyle and FindBugs
+--------------------------------------------
+
+There are 3 checkstyle errors, 2 of which are import order and the other one is a magic 500 number used for the spark server.
+
+There are 3 warnings from FindBugs. The first warning is about formatting strings using %n rather than \n in the spark .createEngine() method. This can be ignored since we want the error to also print a newline character. 
+
+The next warning is about "a load of null value in Main$Repl.start()". My private Repl inner class in the Main class should stop the repl when the user inputs an end of file character, so I have null checks to catch any readLine() errors from System.in.
+
+The last warning is about my BigramComparator class having a non-serializable instance field bigrams.
