@@ -7,10 +7,10 @@ import twitter4j.TwitterFactory;
 import twitter4j.auth.AccessToken;
 
 public class Main {
-  private static String consumerKey = "Pfhdrz4ER5eVvApnIS9y75Md3";
-  private static String consumerSecret = "23H7SQFBxLYYgHTLKY8FsCGYXNvbQSSCHrT7AGxZkM8NjFdNnK";
-  private static String accessToken = "215051822-ihLSGPSJLtErg8lA8cI9ZFQsSqz2ucuBmIDjdQrx";
-  private static String accessTokenSecret = "uqRm8vimYBptY1tfaenabKfS20Uqcgvr1ezBNcUTH4qaN";
+  private static String consumerKey = "";
+  private static String consumerSecret = "";
+  private static String accessToken = "";
+  private static String accessTokenSecret = "";
 
   private String[] args;
   public static Twitter twitter;
